@@ -19,7 +19,7 @@ from deep_translator import GoogleTranslator
 
 SKIP_EXTENSIONS = {".py", ".js", ".css", ".scss", ".json", ".yaml", ".yml", ".toml", ".xml"}
 SKIP_LINE = re.compile(
-    r"^\s*(\.\.|\|\s|\+[-=+]|\$ |>>> |#include\b|https?://|\.{3}\s+|:[\w-]+:|\*\*?\s+|``[^`]+``\s*$)"
+    r"^\s*(\.\.|\|\s|\+[-=+]|\$ |>>> |#include\b|https?://|\.{3}\s+|:[\w-]+:|``[^`]+``\s*$)"
 )
 DIRECTIVE = re.compile(r"^\s*\.\.\s+[\w-]+::")
 ROLE_OR_REF = re.compile(r"^\s*\.\.\s+_[^:]+:\s*$|^\s*\.\.\s+\|[^|]+\|\s+replace::")
