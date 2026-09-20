@@ -17,6 +17,9 @@ from pathlib import Path
 
 from deep_translator import GoogleTranslator
 
+MIN_REQUEST_INTERVAL = 0.25
+RETRY_DELAYS = (2, 4, 8, 16, 32)
+
 SKIP_EXTENSIONS = {".py", ".js", ".css", ".scss", ".json", ".yaml", ".yml", ".toml", ".xml"}
 SKIP_LINE = re.compile(
     r"^\s*(\.\.|\|\s|\+[-=+]|\$ |>>> |#include\b|https?://|\.{3}\s+|:[\w-]+:|``[^`]+``\s*$)"
@@ -28,6 +31,36 @@ HEADING = re.compile(r"^\s*[=\-`:." + "'\"~^_*+#<>" + r"]{3,}\s*$")
 
 def key(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+class TranslationError(RuntimeError):
+    """Raised when a sentence cannot be translated safely."""
+
+
+class ThrottledTranslator:
+    def __init__(self) -> None:
+        self.client = GoogleTranslator(source="en", target="zh-CN")
+        self.last_request_at = 0.0
+
+    def translate(self, text: str) -> str:
+        for attempt, delay in enumerate((0, *RETRY_DELAYS)):
+            if delay:
+                time.sleep(delay)
+            elapsed = time.monotonic() - self.last_request_at
+            if elapsed < MIN_REQUEST_INTERVAL:
+                time.sleep(MIN_REQUEST_INTERVAL - elapsed)
+            try:
+                value = self.client.translate(text)
+                self.last_request_at = time.monotonic()
+                return value
+            except Exception as exc:
+                self.last_request_at = time.monotonic()
+                message = str(exc).lower()
+                rate_limited = "too many requests" in message or "429" in message
+                if not rate_limited or attempt == len(RETRY_DELAYS):
+                    raise TranslationError(f"translation failed after retries: {exc}") from exc
+                print(f"warning: Google rate limit; retry {attempt + 1}/{len(RETRY_DELAYS)}")
+        raise AssertionError("unreachable")
 
 
 def should_skip(line: str, literal: bool) -> bool:
@@ -44,7 +77,7 @@ def should_skip(line: str, literal: bool) -> bool:
 def translate_tree(root: Path, cache_path: Path) -> tuple[int, int]:
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache = json.loads(cache_path.read_text(encoding="utf-8")) if cache_path.exists() else {}
-    translator = GoogleTranslator(source="en", target="zh-CN")
+    translator = ThrottledTranslator()
     translated = 0
     failed = 0
 
@@ -63,15 +96,13 @@ def translate_tree(root: Path, cache_path: Path) -> tuple[int, int]:
             if not pending:
                 return
             missing = [(i, text, digest, prefix) for i, text, digest, prefix in pending if digest not in cache]
-            if missing:
+            for _, text, digest, _ in missing:
                 try:
-                    values = translator.translate_batch([text for _, text, _, _ in missing])
-                    for (_, _, digest, _), value in zip(missing, values):
-                        cache[digest] = value
-                        translated += 1
-                except Exception as exc:
-                    failed += len(missing)
-                    print(f"warning: batch translation failed for {path}: {exc}")
+                    cache[digest] = translator.translate(text)
+                    translated += 1
+                except TranslationError as exc:
+                    failed += 1
+                    raise TranslationError(f"{path}: {exc}") from exc
             translated_by_index = {i: cache.get(digest, text) for i, text, digest, _ in pending}
             for i, text, digest, prefix in pending:
                 newline = "\n" if lines[i].endswith("\n") else ""
@@ -96,7 +127,6 @@ def translate_tree(root: Path, cache_path: Path) -> tuple[int, int]:
             if len(pending) >= 50:
                 flush_pending()
                 cache_path.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
-                time.sleep(0.2)
         flush_pending()
         path.write_text("".join(output), encoding="utf-8")
     cache_path.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
