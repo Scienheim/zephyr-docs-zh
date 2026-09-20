@@ -56,7 +56,29 @@ def translate_tree(root: Path, cache_path: Path) -> tuple[int, int]:
         output: list[str] = []
         literal = False
         literal_indent = 0
-        for line in lines:
+        pending: list[tuple[int, str, str, str]] = []
+
+        def flush_pending() -> None:
+            nonlocal translated, failed
+            if not pending:
+                return
+            missing = [(i, text, digest, prefix) for i, text, digest, prefix in pending if digest not in cache]
+            if missing:
+                try:
+                    values = translator.translate_batch([text for _, text, _, _ in missing])
+                    for (_, _, digest, _), value in zip(missing, values):
+                        cache[digest] = value
+                        translated += 1
+                except Exception as exc:
+                    failed += len(missing)
+                    print(f"warning: batch translation failed for {path}: {exc}")
+            translated_by_index = {i: cache.get(digest, text) for i, text, digest, _ in pending}
+            for i, text, digest, prefix in pending:
+                newline = "\n" if lines[i].endswith("\n") else ""
+                output.append(prefix + translated_by_index[i] + newline)
+            pending.clear()
+
+        for index, line in enumerate(lines):
             indent = len(line) - len(line.lstrip(" "))
             if literal and line.strip() and indent <= literal_indent:
                 literal = False
@@ -64,27 +86,18 @@ def translate_tree(root: Path, cache_path: Path) -> tuple[int, int]:
                 literal = True
                 literal_indent = indent
             if should_skip(line, literal) or len(line.strip()) < 3:
+                flush_pending()
                 output.append(line)
                 continue
             body = line.rstrip("\r\n")
             digest = key(body)
-            if digest in cache:
-                value = cache[digest]
-            else:
-                try:
-                    value = translator.translate(body.strip())
-                    cache[digest] = value
-                    translated += 1
-                    if translated % 25 == 0:
-                        cache_path.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
-                    time.sleep(0.15)
-                except Exception as exc:  # keep source usable when a quota is hit
-                    failed += 1
-                    print(f"warning: translation failed for {path}: {exc}")
-                    value = body.strip()
             prefix = body[: len(body) - len(body.lstrip())]
-            newline = "\n" if line.endswith("\n") else ""
-            output.append(prefix + value + newline)
+            pending.append((index, body.strip(), digest, prefix))
+            if len(pending) >= 50:
+                flush_pending()
+                cache_path.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
+                time.sleep(0.2)
+        flush_pending()
         path.write_text("".join(output), encoding="utf-8")
     cache_path.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
     return translated, failed

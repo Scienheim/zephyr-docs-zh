@@ -38,6 +38,13 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-translate.txt
           python -m pip install -r upstream/doc/requirements.txt
+      - name: Restore translation cache
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: translation-cache-${{ hashFiles('upstream/doc/**/*.rst', 'upstream/doc/**/*.md') }}
+          restore-keys: |
+            translation-cache-
       - name: Translate RST and Markdown sources
         run: python tools/translate_rst.py --tree upstream/doc --cache .cache/translation.json
       - name: Build HTML
