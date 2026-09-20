@@ -12,13 +12,10 @@ import argparse
 import hashlib
 import json
 import re
-import time
 from pathlib import Path
 
-from deep_translator import GoogleTranslator
-
-MIN_REQUEST_INTERVAL = 0.25
-RETRY_DELAYS = (2, 4, 8, 16, 32)
+import argostranslate.package
+import argostranslate.translate
 
 SKIP_EXTENSIONS = {".py", ".js", ".css", ".scss", ".json", ".yaml", ".yml", ".toml", ".xml"}
 SKIP_LINE = re.compile(
@@ -33,34 +30,17 @@ def key(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-class TranslationError(RuntimeError):
-    """Raised when a sentence cannot be translated safely."""
-
-
-class ThrottledTranslator:
+class LocalTranslator:
     def __init__(self) -> None:
-        self.client = GoogleTranslator(source="en", target="zh-CN")
-        self.last_request_at = 0.0
+        argostranslate.package.update_package_index()
+        installed = argostranslate.package.get_installed_packages()
+        if not any(p.from_code == "en" and p.to_code == "zh" for p in installed):
+            available = argostranslate.package.get_available_packages()
+            package = next(p for p in available if p.from_code == "en" and p.to_code == "zh")
+            argostranslate.package.install_from_path(package.download())
 
     def translate(self, text: str) -> str:
-        for attempt, delay in enumerate((0, *RETRY_DELAYS)):
-            if delay:
-                time.sleep(delay)
-            elapsed = time.monotonic() - self.last_request_at
-            if elapsed < MIN_REQUEST_INTERVAL:
-                time.sleep(MIN_REQUEST_INTERVAL - elapsed)
-            try:
-                value = self.client.translate(text)
-                self.last_request_at = time.monotonic()
-                return value
-            except Exception as exc:
-                self.last_request_at = time.monotonic()
-                message = str(exc).lower()
-                rate_limited = "too many requests" in message or "429" in message
-                if not rate_limited or attempt == len(RETRY_DELAYS):
-                    raise TranslationError(f"translation failed after retries: {exc}") from exc
-                print(f"warning: Google rate limit; retry {attempt + 1}/{len(RETRY_DELAYS)}")
-        raise AssertionError("unreachable")
+        return argostranslate.translate.translate(text, "en", "zh")
 
 
 def should_skip(line: str, literal: bool) -> bool:
@@ -77,7 +57,7 @@ def should_skip(line: str, literal: bool) -> bool:
 def translate_tree(root: Path, cache_path: Path) -> tuple[int, int]:
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache = json.loads(cache_path.read_text(encoding="utf-8")) if cache_path.exists() else {}
-    translator = ThrottledTranslator()
+    translator = LocalTranslator()
     translated = 0
     failed = 0
 
@@ -100,9 +80,9 @@ def translate_tree(root: Path, cache_path: Path) -> tuple[int, int]:
                 try:
                     cache[digest] = translator.translate(text)
                     translated += 1
-                except TranslationError as exc:
+                except Exception as exc:
                     failed += 1
-                    raise TranslationError(f"{path}: {exc}") from exc
+                    raise RuntimeError(f"{path}: translation failed: {exc}") from exc
             translated_by_index = {i: cache.get(digest, text) for i, text, digest, _ in pending}
             for i, text, digest, prefix in pending:
                 newline = "\n" if lines[i].endswith("\n") else ""

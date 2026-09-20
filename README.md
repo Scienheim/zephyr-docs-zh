@@ -17,7 +17,7 @@ python tools/translate_rst.py --tree path/to/zephyr/doc --cache .cache/translati
 make -C path/to/zephyr/doc html
 ```
 
-默认翻译服务是 Google Translate 的公开接口封装。若接口限流，可以在工作流中替换为兼容的翻译服务；脚本使用缓存，重复运行不会重复提交已完成的句段。
+默认翻译后端是运行在 GitHub Actions 上的 Argos Translate 本地英译中模型，不依赖共享 runner 的 Google 请求配额；脚本和模型均使用缓存，重复运行不会重复处理已完成的句段。
 
 ## 许可证与来源
 
