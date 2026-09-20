@@ -1,0 +1,54 @@
+name: 同步、翻译并发布
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout translation project
+        uses: actions/checkout@v4
+      - name: Checkout Zephyr source
+        uses: actions/checkout@v4
+        with:
+          repository: zephyrproject-rtos/zephyr
+          ref: main
+          path: upstream
+          fetch-depth: 1
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install translation and documentation dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-translate.txt
+          python -m pip install -r upstream/doc/requirements.txt
+      - name: Translate RST and Markdown sources
+        run: python tools/translate_rst.py --tree upstream/doc --cache .cache/translation.json
+      - name: Build HTML
+        working-directory: upstream/doc
+        run: make html SPHINXOPTS="-j 2 -T --keep-going"
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: upstream/doc/_build/html
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

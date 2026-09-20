@@ -1,0 +1,6 @@
+.cache/
+upstream/
+_build/
+translated/
+*.pyc
+__pycache__/
