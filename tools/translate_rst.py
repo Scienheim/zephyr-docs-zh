@@ -75,28 +75,31 @@ def translate_tree(root: Path, cache_path: Path) -> tuple[int, int]:
             nonlocal translated, failed
             if not pending:
                 return
-            missing = [(i, text, digest, prefix) for i, text, digest, prefix in pending if digest not in cache]
-            for _, text, digest, _ in missing:
+            paragraph = " ".join(text for _, text, _, _ in pending)
+            paragraph_digest = key(paragraph)
+            if paragraph_digest not in cache:
                 try:
-                    cache[digest] = translator.translate(text)
+                    cache[paragraph_digest] = translator.translate(paragraph)
                     translated += 1
                 except Exception as exc:
                     failed += 1
                     raise RuntimeError(f"{path}: translation failed: {exc}") from exc
-            translated_by_index = {i: cache.get(digest, text) for i, text, digest, _ in pending}
-            for i, text, digest, prefix in pending:
-                newline = "\n" if lines[i].endswith("\n") else ""
-                output.append(prefix + translated_by_index[i] + newline)
+            _, _, _, first_prefix = pending[0]
+            newline = "\n" if any(lines[i].endswith("\n") for i, _, _, _ in pending) else ""
+            output.append(first_prefix + cache[paragraph_digest] + newline)
             pending.clear()
 
         for index, line in enumerate(lines):
             indent = len(line) - len(line.lstrip(" "))
+            stripped = line.strip()
             if literal and line.strip() and indent <= literal_indent:
                 literal = False
             if DIRECTIVE.match(line) and any(x in line for x in ("code-block", "code::", "parsed-literal", "literal::")):
                 literal = True
                 literal_indent = indent
-            if should_skip(line, literal) or len(line.strip()) < 3:
+            if pending and stripped.startswith(("- ", "* ", "+ ", "#. ")):
+                flush_pending()
+            if should_skip(line, literal) or len(stripped) < 3:
                 flush_pending()
                 output.append(line)
                 continue
