@@ -54,7 +54,7 @@ def should_skip(line: str, literal: bool) -> bool:
     return False
 
 
-def translate_tree(root: Path, cache_path: Path) -> tuple[int, int]:
+def translate_tree(root: Path, cache_path: Path, output_dir: Path, batch: str) -> tuple[int, int]:
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache = json.loads(cache_path.read_text(encoding="utf-8")) if cache_path.exists() else {}
     translator = LocalTranslator()
@@ -63,6 +63,10 @@ def translate_tree(root: Path, cache_path: Path) -> tuple[int, int]:
 
     for path in sorted(root.rglob("*")):
         if not path.is_file() or path.suffix.lower() not in {".rst", ".md"}:
+            continue
+        relative = path.relative_to(root)
+        path_batch = relative.parts[0] if len(relative.parts) > 1 else "__root__"
+        if path_batch != batch:
             continue
         original = path.read_text(encoding="utf-8")
         lines = original.splitlines(keepends=True)
@@ -111,7 +115,9 @@ def translate_tree(root: Path, cache_path: Path) -> tuple[int, int]:
                 flush_pending()
                 cache_path.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
         flush_pending()
-        path.write_text("".join(output), encoding="utf-8")
+        target = output_dir / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("".join(output), encoding="utf-8")
     cache_path.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
     return translated, failed
 
@@ -120,8 +126,10 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--tree", type=Path, required=True, help="Sphinx doc/ directory")
     parser.add_argument("--cache", type=Path, default=Path(".cache/translation.json"))
+    parser.add_argument("--output", type=Path, required=True, help="Directory for translated files")
+    parser.add_argument("--batch", required=True, help="Top-level directory or __root__")
     args = parser.parse_args()
-    translated, failed = translate_tree(args.tree, args.cache)
+    translated, failed = translate_tree(args.tree, args.cache, args.output, args.batch)
     print(f"translated={translated} failed={failed}")
 
 

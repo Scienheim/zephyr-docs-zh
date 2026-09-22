@@ -17,7 +17,69 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  translate:
+    name: 翻译 ${{ matrix.batch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        batch:
+          - __root__
+          - build
+          - contribute
+          - develop
+          - hardware
+          - introduction
+          - kernel
+          - project
+          - releases
+          - safety
+          - security
+          - services
+    steps:
+      - name: Checkout translation project
+        uses: actions/checkout@v4
+      - name: Checkout Zephyr source
+        uses: actions/checkout@v4
+        with:
+          repository: zephyrproject-rtos/zephyr
+          ref: main
+          path: upstream
+          fetch-depth: 1
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install translation dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-translate.txt
+      - name: Restore translation cache and model
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache
+            ~/.cache/argos-translate
+            ~/.local/share/argos-translate
+          key: translation-cache-argos-${{ matrix.batch }}-${{ hashFiles('upstream/doc/**/*.rst', 'upstream/doc/**/*.md') }}
+          restore-keys: |
+            translation-cache-argos-${{ matrix.batch }}-
+      - name: Translate batch
+        run: >-
+          python tools/translate_rst.py
+          --tree upstream/doc
+          --batch "${{ matrix.batch }}"
+          --cache ".cache/${{ matrix.batch }}.json"
+          --output translated
+      - name: Upload translated batch
+        uses: actions/upload-artifact@v4
+        with:
+          name: translated-${{ matrix.batch }}
+          path: translated
+          if-no-files-found: error
+
   build:
+    needs: translate
     runs-on: ubuntu-latest
     steps:
       - name: Checkout translation project
@@ -29,6 +91,14 @@ jobs:
           ref: main
           path: upstream
           fetch-depth: 1
+      - name: Download translated batches
+        uses: actions/download-artifact@v4
+        with:
+          pattern: translated-*
+          path: translated-parts
+          merge-multiple: true
+      - name: Overlay translated files
+        run: cp -a translated-parts/. upstream/doc/
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
